@@ -1,0 +1,61 @@
+name: Notion sync
+
+on:
+  schedule:
+    # 매일 14:30 UTC = 23:30 KST
+    - cron: "30 14 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (do not write files)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: notion-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Notion -> Markdown sync
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            python scripts/notion_to_md.py --dry-run
+          else
+            python scripts/notion_to_md.py
+          fi
+
+      - name: Commit changes
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add logs
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "chore(sync): notion -> logs ($(date -u +%Y-%m-%dT%H:%MZ))"
+          git push
